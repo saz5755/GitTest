@@ -64,7 +64,7 @@ void ReceiveMessage()
             string json =
                 Encoding.UTF8.GetString(dataBuffer);
 
-            Debug.Log($"[RECV] {json}");
+            // Debug.Log($"[RECV] {json}");
 
             // 4. type 파싱
             JObject obj = JObject.Parse(json);
