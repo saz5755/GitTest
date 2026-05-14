@@ -5,5 +5,8 @@ public enum PacketType
     CHAT = 3,
     SYSTEM = 4,
     DISCONNECT = 5,
-    ENTER_ROOM = 6
+    ENTER_ROOM = 6,
+    
+    MOVE = 7,
+    SPAWN = 8
 }

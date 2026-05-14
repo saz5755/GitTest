@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Net;
 using UnityEngine;
 using System.Net.Sockets;
 using System.Text;
@@ -14,15 +15,22 @@ public class SocketClient : MonoBehaviour
     NetworkStream stream;
 
     Thread receiveThread;
+    
+    public string myNickname;
 
     public ChatUIManager uiManager;
     
+    public PlayerManager playerManager;
+    
     bool isRunning = true;
     
+
+    // "127.0.0.1" 자기자신 IP
+    public string connectIP = "127.0.0.1";
     
     public void Connect()
     {
-        socket = new TcpClient("127.0.0.1", 5000);
+        socket = new TcpClient(connectIP, 5000);
 
         stream = socket.GetStream();
 
@@ -33,82 +41,151 @@ public class SocketClient : MonoBehaviour
         receiveThread.Start();
     }
     
-    void ReceiveMessage()
+void ReceiveMessage()
+{
+    byte[] lengthBuffer = new byte[4];
+
+    while (isRunning)
     {
-        byte[] lengthBuffer = new byte[4];
-
-        while (isRunning)
+        try
         {
-            try
+            // 1. 패킷 길이 읽기
+            ReadFull(stream, lengthBuffer, 4);
+
+            int length =
+                BitConverter.ToInt32(lengthBuffer, 0);
+
+            // 2. 패킷 데이터 읽기
+            byte[] dataBuffer = new byte[length];
+
+            ReadFull(stream, dataBuffer, length);
+
+            // 3. JSON 문자열 변환
+            string json =
+                Encoding.UTF8.GetString(dataBuffer);
+
+            Debug.Log($"[RECV] {json}");
+
+            // 4. type 파싱
+            JObject obj = JObject.Parse(json);
+
+            PacketType type =
+                (PacketType)obj["type"].Value<int>();
+
+            switch (type)
             {
-                // 1. 길이 읽기
-                ReadFull(stream, lengthBuffer, 4);
-                int length = BitConverter.ToInt32(lengthBuffer, 0);
-
-                // 2. 데이터 읽기
-                byte[] dataBuffer = new byte[length];
-                ReadFull(stream, dataBuffer, length);
-                
-                // 3. JSON 변환
-                string json = Encoding.UTF8.GetString(dataBuffer);
-                Debug.Log(json);
-                
-                JObject obj = JObject.Parse(json);
-                string type = obj["type"].ToString();
-
-                if (type == "LOGIN_RESULT")
+                case PacketType.LOGIN_RESULT:
                 {
-                    LoginResultPacket result =
+                    LoginResultPacket packet =
                         JsonConvert.DeserializeObject<LoginResultPacket>(json);
 
-                    if (result.success)
+                    if (packet.success)
                     {
                         UnityMainThreadDispatcher.Instance.Enqueue(() =>
                         {
                             uiManager.SetChatEnable(true);
                         });
                     }
+                    else
+                    {
+                        Debug.Log(packet.message);
+                    }
 
-                    continue;
+                    break;
                 }
 
-                ChatPacket packet =
-                    JsonConvert.DeserializeObject<ChatPacket>(json);
-
-                string finalMessage = "";
-
-                switch (packet.type)
+                case PacketType.CHAT:
+                case PacketType.SYSTEM:
                 {
-                    case PacketType.CHAT:
-                        finalMessage = $"[{packet.nickname}] {packet.message}";
-                        break;
+                    ChatPacket packet =
+                        JsonConvert.DeserializeObject<ChatPacket>(json);
 
-                    case PacketType.SYSTEM:
-                        finalMessage = $"<color=yellow>{packet.message}</color>";
-                        break;
+                    string finalMessage = "";
+
+                    switch (packet.type)
+                    {
+                        case PacketType.CHAT:
+
+                            finalMessage =
+                                $"[{packet.nickname}] {packet.message}";
+
+                            break;
+
+                        case PacketType.SYSTEM:
+
+                            finalMessage =
+                                $"<color=yellow>{packet.message}</color>";
+
+                            break;
+                    }
+
+                    UnityMainThreadDispatcher.Instance.Enqueue(() =>
+                    {
+                        uiManager.AddMessage(finalMessage);
+                    });
+
+                    break;
+                }
+                
+                case PacketType.SPAWN:
+                {
+                    SpawnPacket packet =
+                        JsonConvert.DeserializeObject<SpawnPacket>(json);
+
+                    UnityMainThreadDispatcher.Instance.Enqueue(() =>
+                    {
+                        playerManager.CreatePlayer(
+                            packet.nickname,
+                            new Vector3(
+                                packet.x,
+                                packet.y,
+                                packet.z));
+                    });
+
+                    break;
                 }
 
-                UnityMainThreadDispatcher.Instance.Enqueue(() =>
+                case PacketType.MOVE:
                 {
-                    uiManager.AddMessage(finalMessage);
-                });
+                    MoveBroadcastPacket packet =
+                        JsonConvert.DeserializeObject<MoveBroadcastPacket>(json);
+
+                    UnityMainThreadDispatcher.Instance.Enqueue(() =>
+                    {
+                        playerManager.MovePlayer(
+                            packet.nickname,
+                            new Vector3(
+                                packet.x,
+                                packet.y,
+                                packet.z));
+                    });
+
+                    break;
+                }
+
+                default:
+                {
+                    Debug.Log($"Unknown Packet : {type}");
+                    break;
+                }
             }
-            catch (IOException)
-            {
-                Debug.Log("Disconnected");
-            }
-            catch (SocketException)
-            {
-                Debug.Log("Socket Closed");
-            }
-            catch(Exception e)
-            {
-                Debug.Log(e.ToString());
-            }
-          
+        }
+        catch (IOException)
+        {
+            Debug.Log("Disconnected");
+            break;
+        }
+        catch (SocketException)
+        {
+            Debug.Log("Socket Closed");
+            break;
+        }
+        catch (Exception e)
+        {
+            Debug.Log(e.ToString());
         }
     }
-
+}
     public void SendChat(string msg)
     {
         ChatPacket packet = new ChatPacket();
@@ -153,7 +230,10 @@ public class SocketClient : MonoBehaviour
         if (stream == null)
             Connect();
 
+        myNickname = id;
+
         LoginPacket packet = new();
+
         packet.type = PacketType.LOGIN;
         packet.id = id;
         packet.password = pw;
@@ -199,5 +279,23 @@ public class SocketClient : MonoBehaviour
 
         SendPacket(packet);
     }
+    public void SendMove(Vector3 pos)
+    {
+        MovePacket packet = new();
+
+        packet.type = PacketType.MOVE;
+
+        packet.x = pos.x;
+        packet.y = pos.y;
+        packet.z = pos.z;
+
+        SendPacket(packet);
+    }
     
+    public bool IsConnected()
+    {
+        return socket != null &&
+               socket.Connected &&
+               stream != null;
+    }
 }
