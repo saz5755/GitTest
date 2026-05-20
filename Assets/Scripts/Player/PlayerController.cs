@@ -76,13 +76,9 @@ public class PlayerController : MonoBehaviour
     {
         if (snapshots.Count < 2)
         {
-            Debug.Log("스냅샷 2미만 디버그");
             return;
         }
-            
-        Debug.Log("스냅샷 2이상 디버그");
-
-
+        
         float renderTime = Time.time - 0.1f;
 
         // 안전하게 2개 유지
@@ -116,6 +112,9 @@ public class PlayerController : MonoBehaviour
             Quaternion.Euler(0, to.rotY, 0),
             t
         );
+        
+        anim.SetBool("Move", to.isMove);
+        
     }
 
     public void SetTargetPosition(Vector3 pos, float rotY, bool isMove)
