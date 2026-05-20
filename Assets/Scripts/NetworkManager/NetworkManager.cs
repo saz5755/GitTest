@@ -20,8 +20,8 @@ public class NetworkManager : MonoBehaviour
                socketClient.IsConnected();
     }
 
-    public void SendMove(Vector3 pos)
+    /*public void SendMove(Vector3 pos, float rotY)
     {
-        socketClient.SendMove(pos);
-    }
+        socketClient.SendMove(pos, rotY);
+    }*/
 }

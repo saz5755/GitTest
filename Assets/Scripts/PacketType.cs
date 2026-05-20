@@ -8,5 +8,7 @@ public enum PacketType
     ENTER_ROOM = 6,
     
     MOVE = 7,
-    SPAWN = 8
+    SPAWN = 8,
+    
+    UDP_CONNECT = 9
 }

@@ -1,28 +1,37 @@
 using System.Collections.Generic;
+using Unity.VisualScripting;
 using UnityEngine;
 
 public class PlayerManager : MonoBehaviour
 {
     public GameObject playerPrefab;
 
-    Dictionary<string, PlayerController> players
-        = new();
+    Dictionary<string, PlayerController> players = new();
 
-    public void MovePlayer(string nickname, Vector3 pos)
+    public PlayerController GetPlayer(string nickname)
     {
-        if(players.ContainsKey(nickname) == false)
+        if(players.ContainsKey(nickname))
+        {
+            return players[nickname];
+        }
+        
+        return null;
+    }
+    
+    public void MovePlayer(string nickname, Vector3 pos, float rotY, bool isMove, int tick)
+    {
+        Debug.Log($"[MOVE] {nickname} {pos}");
+        
+        if (!players.ContainsKey(nickname))
             return;
 
-        PlayerController player =
-            players[nickname];
+        PlayerController player = players[nickname];
 
-        if(player.isLocalPlayer)
-            return;
-
-        player.SetTargetPosition(pos);
+        player.AddSnapshot(pos, rotY, isMove);
+        
     }
 
-    public void CreatePlayer(string nickname, Vector3 pos)
+    public void CreatePlayer(string nickname, Vector3 pos, float rotY, bool isMove)
     {
         Debug.Log($"CreatePlayer 호출 : {nickname}");
         
@@ -50,7 +59,7 @@ public class PlayerManager : MonoBehaviour
         player.transform.position = pos;
 
         // Remote 보간 초기값 동기화
-        player.SetTargetPosition(pos);
+        player.SetTargetPosition(pos, rotY, isMove);
 
         players[nickname] = player;
 

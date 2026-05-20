@@ -11,6 +11,10 @@ using Newtonsoft.Json.Linq;
 public class SocketClient : MonoBehaviour
 {
     TcpClient socket;
+    
+    UdpClient udp;
+    
+    Thread udpReceiveThread;
 
     NetworkStream stream;
 
@@ -23,15 +27,14 @@ public class SocketClient : MonoBehaviour
     public PlayerManager playerManager;
     
     bool isRunning = true;
-    
 
     // "127.0.0.1" 자기자신 IP
-    public string connectIP = "127.0.0.1";
+    public string connectIP = "172.30.201.117";
     
     public void Connect()
     {
         socket = new TcpClient(connectIP, 5000);
-
+        
         stream = socket.GetStream();
 
         receiveThread = new Thread(ReceiveMessage);
@@ -39,6 +42,17 @@ public class SocketClient : MonoBehaviour
         receiveThread.IsBackground = true;
 
         receiveThread.Start();
+        
+        // UDP 생성
+        udp = new UdpClient(0);
+        udp.Connect(connectIP, 6000);        
+        
+        udpReceiveThread = new Thread(UdpReceiveLoop);
+
+        udpReceiveThread.IsBackground = true;
+
+        udpReceiveThread.Start();
+        
     }
     
 void ReceiveMessage()
@@ -84,6 +98,8 @@ void ReceiveMessage()
                         UnityMainThreadDispatcher.Instance.Enqueue(() =>
                         {
                             uiManager.SetChatEnable(true);
+                            
+                            SendUdpConnect();
                         });
                     }
                     else
@@ -139,7 +155,9 @@ void ReceiveMessage()
                             new Vector3(
                                 packet.x,
                                 packet.y,
-                                packet.z));
+                                packet.z),
+                            packet.rotY,
+                            packet.isMove);
                     });
 
                     break;
@@ -155,9 +173,12 @@ void ReceiveMessage()
                         playerManager.MovePlayer(
                             packet.nickname,
                             new Vector3(
-                                packet.x,
-                                packet.y,
-                                packet.z));
+                                packet.position.X,
+                                packet.position.Y,
+                                packet.position.Z),
+                            packet.rotY,
+                            packet.isMove,
+                            packet.tick);
                     });
 
                     break;
@@ -245,12 +266,19 @@ void ReceiveMessage()
     {
         int offset = 0;
 
-        while (offset < size)
+        while(offset < size)
         {
-            int read = stream.Read(buffer, offset, size - offset);
+            int read =
+                stream.Read(
+                    buffer,
+                    offset,
+                    size - offset);
 
-            if (read <= 0)
-                throw new Exception("Disconnected");
+            if(read <= 0)
+            {
+                throw new Exception(
+                    "Client Disconnected");
+            }
 
             offset += read;
         }
@@ -279,17 +307,51 @@ void ReceiveMessage()
 
         SendPacket(packet);
     }
-    public void SendMove(Vector3 pos)
+    
+    public void SendMove(float moveX, float moveY, float moveZ, float rotY, bool isMove)
     {
         MovePacket packet = new();
 
         packet.type = PacketType.MOVE;
+        
+        // Input
+        packet.moveX = moveX;
+        packet.moveY = moveY;
+        packet.moveZ = moveZ;
 
-        packet.x = pos.x;
-        packet.y = pos.y;
-        packet.z = pos.z;
+        // Rotation
+        packet.rotY = rotY;
 
-        SendPacket(packet);
+        // Animation
+        packet.isMove = isMove;
+
+        string json =
+            JsonConvert.SerializeObject(packet);
+        
+        Debug.Log($"[CLIENT SEND JSON] {json}");
+        
+
+        byte[] data =
+            Encoding.UTF8.GetBytes(json);
+
+        udp.Send(data, data.Length);
+    }
+    
+    public void SendUdpConnect()
+    {
+        UdpConnectPacket packet = new();
+
+        packet.type = PacketType.UDP_CONNECT;
+
+        packet.nickname = myNickname;
+
+        string json = JsonConvert.SerializeObject(packet);
+
+        byte[] data = Encoding.UTF8.GetBytes(json);
+
+        udp.Send(data, data.Length);
+
+        Debug.Log($"UDP CONNECT SEND : {json}");
     }
     
     public bool IsConnected()
@@ -297,5 +359,76 @@ void ReceiveMessage()
         return socket != null &&
                socket.Connected &&
                stream != null;
+    }
+    
+    void UdpReceiveLoop()
+    {
+        IPEndPoint remoteEP =
+            new IPEndPoint(IPAddress.Any, 0);
+
+        while(isRunning)
+        {
+            try
+            {
+                byte[] data =
+                    udp.Receive(ref remoteEP);
+
+                string json =
+                    Encoding.UTF8.GetString(data);
+
+                Debug.Log(
+                    $"UDP RECV : {json}");
+
+                JObject obj =
+                    JObject.Parse(json);
+
+                PacketType type =
+                    (PacketType)obj["type"]
+                        .Value<int>();
+
+                switch(type)
+                {
+                    case PacketType.MOVE:
+                    {
+                        MoveBroadcastPacket packet = 
+                            JsonConvert.DeserializeObject<MoveBroadcastPacket>(json);
+                        
+                        PlayerController player = playerManager.GetPlayer(packet.nickname);
+
+                        if (player == null)
+                            break;
+
+                        /*// 오래된 패킷 무시
+                        if(packet.tick <= player.lastReceivedTick)
+                        {
+                            break;
+                        }*/
+
+                        player.lastReceivedTick = packet.tick;
+                        
+                        UnityMainThreadDispatcher
+                            .Instance
+                            .Enqueue(() =>
+                            {
+                                playerManager.MovePlayer(
+                                    packet.nickname,
+                                    new Vector3(
+                                        packet.position.X,
+                                        packet.position.Y,
+                                        packet.position.Z),
+                                    packet.rotY,
+                                    packet.isMove,
+                                    packet.tick);
+                            });
+
+                        break;
+                    }
+                }
+            }
+            catch(Exception e)
+            {
+                Debug.Log(e);
+            }
+        }
     }
 }
